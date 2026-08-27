@@ -1,7 +1,5 @@
 # OSS 上传助手
-
-Tauri 2 + Rust 写的 OSS 上传 GUI，内部调用阿里云官方 `ossutil`。
-专治 OSS Browser 传大批数据时卡断、断了要重传的问题。
+为了避免oss browswer 上传下载出现任务失败，方便多文件大文件传输而写的GUI，本质用的还是ossutil。
 
 ## 它解决什么
 
