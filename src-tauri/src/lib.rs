@@ -797,10 +797,16 @@ async fn start_upload(
     if !source.exists() {
         return Err(format!("本地路径不存在: {}", req.local_path));
     }
-    let target = req.target();
     // 单个文件不能带 -r，ossutil 会直接拒绝：
     // "xxx is a not directory, can not work with --recursive option"
     let recursive = source.is_dir();
+    // `ossutil cp -r 本地目录 oss://bucket/前缀/` 只把目录里的内容铺到前缀下，
+    // 目录本身不会出现在 OSS 上。补一层同名前缀，选中的文件夹才不会散开。
+    let target = match (recursive, source.file_name().and_then(|n| n.to_str())) {
+        (true, Some(name)) => format!("{}{}/", req.target(), name),
+        // 拿不到名字的只有盘符根这类路径，维持原样直接铺开
+        _ => req.target(),
+    };
     spawn_transfer(
         app,
         state,
