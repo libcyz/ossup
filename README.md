@@ -24,6 +24,18 @@ npm run tauri:build    # 打包安装包
 
 打包产物在 `src-tauri/target/release/bundle/`，发给同事直接装，对方不需要任何环境。
 
+### Fedora / RPM
+
+推一个 `v*` tag（如 `git tag v0.1.0 && git push origin v0.1.0`），GitHub Actions
+（`.github/workflows/release-rpm.yml`）会构建 x86_64 的 `.rpm` 并作为附件传到对应的
+Release。ossutil 会在 CI 里下载并打进包，装完开箱即用。
+
+```bash
+sudo dnf install ./oss-*-0.1.0-1.x86_64.rpm
+```
+
+也可以在 Actions 页面手动触发（workflow_dispatch），产物在该次 run 的 artifacts 里。
+
 ## 目录结构
 
 ```

@@ -39,6 +39,11 @@
       "icons/icon.png"
     ],
     "resources": ["binaries/*"],
+    "linux": {
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3"]
+      }
+    },
     "windows": {
       "nsis": {
         "languages": ["SimpChinese"],
