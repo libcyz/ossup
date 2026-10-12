@@ -30,6 +30,8 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
+mod direct;
+
 const EVENT: &str = "upload://event";
 
 /* ------------------------------------------------------------------ */
@@ -48,6 +50,10 @@ fn d_part() -> u64 {
 
 fn d_max_tasks() -> u32 {
     3
+}
+
+fn d_true() -> bool {
+    true
 }
 
 /// 一套已保存的账号凭证。多账号切换用。
@@ -102,6 +108,9 @@ pub struct ClientConfig {
     /// 不限制的话拖十个文件夹就是十个进程一起抢带宽。
     #[serde(default = "d_max_tasks")]
     pub max_tasks: u32,
+    /// 绕过代理 / TUN 直连 OSS，见 `direct` 模块。
+    #[serde(default = "d_true")]
+    pub direct: bool,
     /// 已保存的账号，用于快速切换。
     #[serde(default)]
     pub accounts: Vec<Account>,
@@ -126,6 +135,7 @@ impl Default for ClientConfig {
             ossutil_path: String::new(),
             cli_creds: false,
             max_tasks: d_max_tasks(),
+            direct: true,
             accounts: Vec::new(),
             buckets: Vec::new(),
         }
@@ -149,6 +159,9 @@ struct StoredConfig {
     ossutil_path: String,
     cli_creds: bool,
     max_tasks: u32,
+    /// 老配置里没有这个字段，按开启处理
+    #[serde(default = "d_true")]
+    direct: bool,
     accounts: Vec<StoredAccount>,
     buckets: Vec<String>,
 }
@@ -204,6 +217,7 @@ fn load_config(app: AppHandle) -> Result<ClientConfig, String> {
         } else {
             stored.max_tasks
         },
+        direct: stored.direct,
         accounts: stored
             .accounts
             .into_iter()
@@ -242,6 +256,7 @@ fn save_config(app: AppHandle, cfg: ClientConfig) -> Result<(), String> {
         ossutil_path: cfg.ossutil_path,
         cli_creds: cfg.cli_creds,
         max_tasks: cfg.max_tasks,
+        direct: cfg.direct,
         accounts: cfg
             .accounts
             .into_iter()
@@ -399,6 +414,8 @@ pub struct UploadRequest {
     pub ossutil_path: String,
     #[serde(default)]
     pub cli_creds: bool,
+    #[serde(default = "d_true")]
+    pub direct: bool,
 }
 
 impl UploadRequest {
@@ -616,11 +633,16 @@ fn write_cred_file(app: &AppHandle, ak: &str, sk: &str, endpoint: &str) -> Resul
     Ok(path)
 }
 
-/// 凭证 + 签名版本，`cp` 和 `ls` 都要带。
-fn add_auth_args(cmd: &mut Command, cred_file: &Path, endpoint: &str) {
+/// 凭证 + 签名版本 + 直连隧道，`cp` 和 `ls` 都要带。
+fn add_auth_args(cmd: &mut Command, cred_file: &Path, endpoint: &str, direct: bool) {
     cmd.arg("--config-file").arg(cred_file);
     if region_from_endpoint(endpoint).is_none() {
         cmd.arg("--sign-version").arg("v1");
+    }
+    if direct {
+        if let Some(proxy) = direct::proxy_url() {
+            cmd.arg("--proxy").arg(proxy);
+        }
     }
 }
 
@@ -637,6 +659,8 @@ pub struct Auth {
     pub endpoint: String,
     #[serde(default)]
     pub ossutil_path: String,
+    #[serde(default = "d_true")]
+    pub direct: bool,
 }
 
 /// `ossutil api <op> [args] --output-format json` 的透传。
@@ -661,7 +685,7 @@ async fn oss_api(
 
     let mut cmd = base_command(&app, &auth.ossutil_path);
     cmd.arg("api").arg(&op);
-    add_auth_args(&mut cmd, &cred_file, &auth.endpoint);
+    add_auth_args(&mut cmd, &cred_file, &auth.endpoint, auth.direct);
     cmd.args(&args).arg("--output-format").arg("json");
 
     let output = cmd
@@ -737,7 +761,7 @@ async fn oss_run(app: AppHandle, auth: Auth, args: Vec<String>) -> Result<String
 
     let mut cmd = base_command(&app, &auth.ossutil_path);
     cmd.arg(sub);
-    add_auth_args(&mut cmd, &cred_file, &auth.endpoint);
+    add_auth_args(&mut cmd, &cred_file, &auth.endpoint, auth.direct);
     cmd.args(rest);
 
     let output = cmd
@@ -819,6 +843,106 @@ async fn start_upload(
     .await
 }
 
+/// 对话框给的是文件夹，且 Linux 上经常不带尾斜杠，偶尔还带着 `file://`。
+/// ossutil 的规则：目的不存在且没有尾斜杠 → 当成文件名；再叠 `-u`，已存在的
+/// 目录会被当成「已是最新」直接跳过。用户去文件夹里找原文件名，没有。
+/// 这里把路径收成 `目录/原文件名`（目录则再补尾斜杠），和上传侧补同名前缀是对称的。
+fn download_target(dir: &str, source: &str, recursive: bool) -> Result<String, String> {
+    let dir = local_dir(dir)?;
+    let name = object_basename(source).ok_or_else(|| format!("无法从 {source} 解析文件名"))?;
+    let dest = dir.join(name);
+    if recursive {
+        Ok(with_trailing_sep(dest))
+    } else {
+        Ok(dest.to_string_lossy().into_owned())
+    }
+}
+
+fn local_dir(raw: &str) -> Result<PathBuf, String> {
+    let s = strip_file_url(raw.trim());
+    if s.is_empty() {
+        return Err("没有选择保存位置".into());
+    }
+    let mut dir = PathBuf::from(s);
+    if !dir.is_absolute() {
+        dir = std::env::current_dir()
+            .map_err(|e| format!("无法解析保存位置: {e}"))?
+            .join(dir);
+    }
+    Ok(dir)
+}
+
+/// `oss://bucket/a/b/file.txt` → `file.txt`；`oss://bucket/a/dir/` → `dir`
+fn object_basename(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("oss://").unwrap_or(uri);
+    let path = rest.split_once('/')?.1;
+    path.split('/')
+        .filter(|s| !s.is_empty())
+        .next_back()
+        .map(str::to_string)
+}
+
+fn strip_file_url(raw: &str) -> String {
+    let Some(rest) = raw.strip_prefix("file://") else {
+        return percent_decode(raw);
+    };
+    let rest = percent_decode(rest);
+    if let Some(path) = rest.strip_prefix("localhost") {
+        return if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("/{path}")
+        };
+    }
+    #[cfg(windows)]
+    {
+        let b = rest.as_bytes();
+        if b.len() >= 3 && b[0] == b'/' && b[2] == b':' {
+            return rest[1..].to_string();
+        }
+    }
+    rest
+}
+
+fn percent_decode(s: &str) -> String {
+    if !s.as_bytes().contains(&b'%') {
+        return s.to_string();
+    }
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex_digit(b[i + 1]), hex_digit(b[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
+}
+
+fn hex_digit(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn with_trailing_sep(path: PathBuf) -> String {
+    let mut s = path.to_string_lossy().into_owned();
+    let sep = std::path::MAIN_SEPARATOR;
+    if !s.ends_with(sep) && !s.ends_with('/') {
+        s.push(sep);
+    }
+    s
+}
+
 /// 下载就是把 `cp` 的两端调个个儿：断点续传、进度解析、取消，全都原样复用。
 ///
 /// `recursive` 由前端按列表里的类型给：目录（OSS 上的 key 前缀）才要 `-r`，
@@ -833,6 +957,15 @@ async fn start_download(
     recursive: bool,
     task_id: String,
 ) -> Result<(), String> {
+    let target = download_target(&target, &source, recursive)?;
+    let dest = PathBuf::from(&target);
+    let to_create = if recursive {
+        dest.clone()
+    } else {
+        dest.parent().unwrap_or(&dest).to_path_buf()
+    };
+    std::fs::create_dir_all(&to_create)
+        .map_err(|e| format!("无法创建保存目录 {}: {e}", to_create.display()))?;
     spawn_transfer(app, state, req, source, target, recursive, task_id).await
 }
 
@@ -864,7 +997,7 @@ async fn spawn_transfer(
     }
     cmd.arg("-u") // skip objects that are already up to date
         .arg("-f"); // never prompt
-    add_auth_args(&mut cmd, &cred_file, &req.endpoint);
+    add_auth_args(&mut cmd, &cred_file, &req.endpoint, req.direct);
     cmd.arg("--checkpoint-dir")
         .arg(&checkpoint)
         // 2.x 的错误报告默认写到当前工作目录的 ossutil_output/，挪进配置目录
@@ -893,10 +1026,18 @@ async fn spawn_transfer(
         .stdin(Stdio::null())
         .kill_on_drop(true);
 
+    let net = if !req.direct {
+        "系统网络".to_string()
+    } else {
+        match tokio::task::spawn_blocking(direct::source_ip).await.ok().flatten() {
+            Some(ip) => format!("直连 {ip}"),
+            None => "直连（未找到物理网卡，走系统网络）".to_string(),
+        }
+    };
     let _ = app.emit(
         EVENT,
         UploadEvent::log(format!(
-            "[start] {} -> {}  (jobs={}, parallel={}, part-size={}MB)",
+            "[start] {} -> {}  (jobs={}, parallel={}, part-size={}MB, {net})",
             source,
             target,
             req.jobs,
@@ -1041,7 +1182,7 @@ async fn verify_upload(app: AppHandle, req: UploadRequest) -> Result<VerifyResul
     let cred_file = write_cred_file(&app, &req.access_key_id, &req.access_key_secret, &req.endpoint)?;
     let mut cmd = base_command(&app, &req.ossutil_path);
     cmd.arg("ls").arg("--short-format"); // 2.x 去掉了 -s 短写法
-    add_auth_args(&mut cmd, &cred_file, &req.endpoint);
+    add_auth_args(&mut cmd, &cred_file, &req.endpoint, req.direct);
     let output = cmd
         .arg(req.target())
         .stdout(Stdio::piped())
@@ -1076,6 +1217,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .setup(|_| {
+            // 起不来也不拦着启动：ossutil 不带 --proxy，照旧走系统网络
+            if let Err(e) = direct::start() {
+                eprintln!("[direct] 隧道启动失败: {e}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,
@@ -1093,7 +1241,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_api_output, parse_line, region_from_endpoint};
+    use super::{download_target, parse_api_output, parse_line, region_from_endpoint};
+    use std::path::PathBuf;
 
     /// ossutil 真实输出的形状：JSON 之后跟一个空行 + 计时行。
     #[test]
@@ -1147,6 +1296,45 @@ mod tests {
 
         // 普通日志行不该被当成进度
         assert_eq!(parse_line("Error: NoSuchBucket").kind, "log");
+    }
+
+    #[test]
+    fn download_target_file_keeps_original_name() {
+        let got = download_target("/tmp/dl", "oss://bucket/dir/photo.jpg", false).unwrap();
+        let p = PathBuf::from(got);
+        assert_eq!(p.file_name().unwrap(), "photo.jpg");
+        assert_eq!(p.parent().and_then(|p| p.file_name()).unwrap(), "dl");
+    }
+
+    #[test]
+    fn download_target_folder_wraps_in_same_name() {
+        let got = download_target("/tmp/dl", "oss://bucket/a/folder/", true).unwrap();
+        assert!(got.ends_with('/') || got.ends_with('\\'));
+        let p = PathBuf::from(got.trim_end_matches(['/', '\\']));
+        assert_eq!(p.file_name().unwrap(), "folder");
+    }
+
+    #[test]
+    fn download_target_strips_file_url() {
+        let got = download_target("file:///tmp/dl", "oss://b/x.bin", false).unwrap();
+        let p = PathBuf::from(got);
+        assert_eq!(p.file_name().unwrap(), "x.bin");
+        assert_eq!(p.parent().and_then(|p| p.file_name()).unwrap(), "dl");
+    }
+
+    #[test]
+    fn download_target_decodes_percent_path() {
+        let got =
+            download_target("file:///tmp/%E4%B8%8B%E8%BD%BD", "oss://b/a.txt", false).unwrap();
+        let p = PathBuf::from(got);
+        assert_eq!(p.file_name().unwrap(), "a.txt");
+        assert_eq!(p.parent().and_then(|p| p.file_name()).unwrap(), "下载");
+    }
+
+    #[test]
+    fn download_target_rejects_empty_name() {
+        assert!(download_target("/tmp/dl", "oss://bucket/", false).is_err());
+        assert!(download_target("", "oss://bucket/a.txt", false).is_err());
     }
 
     #[test]

@@ -8,6 +8,7 @@ export type Auth = {
 	accessKeySecret: string
 	endpoint: string
 	ossutilPath: string
+	direct: boolean
 }
 
 export const ossApi = (auth: Auth, op: string, args: string[] = []): Promise<any> =>

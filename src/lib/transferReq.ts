@@ -24,5 +24,6 @@ export function uploadReqFor(
 		partSizeMb: config.partSizeMb,
 		ossutilPath: config.ossutilPath.trim(),
 		cliCreds: config.cliCreds,
+		direct: config.direct,
 	}
 }

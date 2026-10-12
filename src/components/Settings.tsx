@@ -1,4 +1,4 @@
-/* 传输参数设置。四个数字都直接对应 ossutil 的行为，改完立即保存。 */
+/* 传输参数设置。四个数字和直连开关都直接对应 ossutil 的行为，改完立即保存。 */
 
 import { useState } from "react"
 
@@ -56,6 +56,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
 		jobs: config.jobs,
 		parallel: config.parallel,
 		partSizeMb: config.partSizeMb,
+		direct: config.direct,
 	}))
 
 	const submit = (e: React.FormEvent) => {
@@ -95,6 +96,20 @@ export function Settings({ onClose }: { onClose: () => void }) {
 						<p className="hint">{f.hint}</p>
 					</div>
 				))}
+
+				<div className="field">
+					<label className="check">
+						<input
+							type="checkbox"
+							checked={draft.direct}
+							onChange={(e) => setDraft((d) => ({ ...d, direct: e.target.checked }))}
+						/>
+						<span>绕过代理直连 OSS</span>
+					</label>
+					<p className="hint">
+						Clash 等 TUN / 全局代理会把 OSS 流量绕到代理节点，速度被节点卡住。开启后从物理网卡直连；只能经代理访问 OSS 的网络请关闭。
+					</p>
+				</div>
 
 				<div className="modal-actions">
 					<button type="button" className="btn" onClick={onClose}>

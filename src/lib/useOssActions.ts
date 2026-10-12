@@ -85,6 +85,7 @@ export function useOssActions() {
 		partSizeMb: session.config.partSizeMb,
 		ossutilPath: session.config.ossutilPath.trim(),
 		cliCreds: session.config.cliCreds,
+		direct: session.config.direct,
 	})
 
 	const validateUri = (value: string) =>
@@ -108,9 +109,12 @@ export function useOssActions() {
 
 	const downloadItem = (item: OssItem) => {
 		void (async () => {
-			const target = await pickPath({ directory: true, multiple: false })
-			if (typeof target !== "string") return
-			/* 下载不走 run()：它是长任务，进度归状态栏管，
+			const picked = await pickPath({ directory: true, multiple: false })
+			const target = Array.isArray(picked) ? picked[0] : picked
+			if (typeof target !== "string" || !target) return
+			/* 这里只传选中的文件夹；真正写成「目录/原文件名」在后端，
+			   否则 ossutil 会把目录本身当成目的文件（Linux 上再叠 -u 直接跳过）。
+			   下载不走 run()：它是长任务，进度归状态栏管，
 			   在这里 await 会把 busy 一直卡住、挡掉其它操作 */
 			const id = newTaskId()
 			useTransfersStore.getState().enqueue(

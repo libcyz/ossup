@@ -27,6 +27,8 @@ export type Config = {
 	cliCreds: boolean
 	/** 同时进行的传输任务上限 */
 	maxTasks: number
+	/** 绕过代理 / TUN 直连 OSS */
+	direct: boolean
 	accounts: Account[]
 	buckets: string[]
 }
@@ -44,6 +46,7 @@ const DEFAULTS: Config = {
 	ossutilPath: "",
 	cliCreds: false,
 	maxTasks: 3,
+	direct: true,
 	accounts: [],
 	buckets: [],
 }
@@ -99,6 +102,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 			accessKeySecret: c.accessKeySecret,
 			endpoint: normalizeEndpoint(c.endpoint),
 			ossutilPath: c.ossutilPath.trim(),
+			direct: c.direct,
 		}
 	},
 
