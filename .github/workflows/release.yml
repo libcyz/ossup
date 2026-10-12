@@ -22,11 +22,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: linux-rpm
-            os: ubuntu-24.04
-            bundles: rpm
+          # AppImage 下载即用（chmod +x 后直接运行），RPM 给 dnf 安装。
+          # 用 22.04 构建：AppImage 只能跑在 glibc 不低于构建机的系统上，越老兼容越广
+          - name: linux
+            os: ubuntu-22.04
+            bundles: appimage,rpm
             target: ""
-            out: src-tauri/target/release/bundle/rpm/*.rpm
+            out: src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/release/bundle/rpm/*.rpm
           - name: windows-nsis
             os: windows-latest
             bundles: nsis
