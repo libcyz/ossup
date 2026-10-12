@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from "react"
 
 export type ConfirmSpec = {
 	title: string
-	/** 说清楚将要对什么做什么，别只写"确定吗" */
 	body: string
 	detail?: string
 	confirmText: string
@@ -15,7 +14,7 @@ export type ConfirmSpec = {
 export function Confirm({ spec, onClose }: { spec: ConfirmSpec; onClose: () => void }) {
 	const ref = useRef<HTMLButtonElement>(null)
 
-	/* 焦点落在"取消"上 —— 顺手一个回车不该把东西删了 */
+
 	useEffect(() => ref.current?.focus(), [])
 
 	return (

@@ -1,9 +1,3 @@
-/* 面包屑：我的数据 › 项目A › 2026-08 ›
-   - 每级可点击直接跳转
-   - 每个 › 可点击，弹出该级同级目录的下拉
-   - 容器不够宽时中间层级折叠成 …，始终保留首级和末两级
-     折叠判断走 ResizeObserver 实测宽度，不按字符数硬猜
-   - 点空白处切换为可编辑地址栏，Esc 取消 */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 

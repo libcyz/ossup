@@ -1,9 +1,4 @@
-/* 需要跨会话保留的界面偏好：收藏夹 + 侧边栏宽度 + 列宽 + 视图模式。
 
-   收藏夹是手动维护的常用路径清单，不随浏览自动增删 —— 之前那版"逛到哪就往
-   侧边栏加一条"逛几层就被刷满了。
-
-   宽度一律存 rem 数值而不是 px：用户改系统缩放后，px 会让布局跟着走样。 */
 
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
@@ -17,7 +12,7 @@ export type Favorite = {
 	path: string
 }
 
-/** 名称、修改日期、类型、大小 */
+
 export const DEFAULT_COLUMNS = [22, 12, 9, 7]
 
 type PrefsState = {

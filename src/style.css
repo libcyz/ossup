@@ -1,13 +1,4 @@
-/* Archivo Black 只有一个字重（400 就是它的"黑体"本身），没有更粗的可选。
-   所以用它的地方一律不要写 font-weight: bold —— 浏览器会去做合成加粗
-   （faux bold），在本来就很重的字面上糊成一团。
 
-   font-display: block 而不是 swap——登录页一闪而过，用 swap 会看到字体从
-   fallback 跳到 Archivo，反而更难看。
-
-   字体必须打进包：本应用 CSP 是 default-src 'self'，Google Fonts 的 CDN
-   链接会被拦掉。文件放 public/fonts/，Vite 原样拷贝、不做构建期解析，
-   所以文件没放进去也不会让构建失败，只是退回后备字体。 */
 @font-face {
 	font-family: "Archivo Black";
 	src: url("/fonts/ArchivoBlack-Regular.woff2") format("woff2");
@@ -134,8 +125,7 @@ button {
 	color: inherit;
 }
 
-/* 文件名、标签、表头都是拿来点的不是拿来读的，拖选出一片蓝底反而碍事。
-   地址栏和搜索框是 input，不受影响。 */
+
 .row,
 .cellbox,
 .listitem,
@@ -148,8 +138,6 @@ button {
 	user-select: none;
 }
 
-/* 带 viewBox 但没有宽高的 SVG 会撑满容器。按钮里的图标一律先给个默认尺寸，
-   具体位置要更大更小的再各自覆盖 —— 漏一个就是一个占满半屏的巨型图标。 */
 button svg,
 .state svg {
 	width: var(--icon-sm);
@@ -179,8 +167,6 @@ button svg,
 	background-clip: content-box;
 }
 
-/* ================= 布局 ================= */
-
 .app {
 	display: grid;
 	grid-template-rows: var(--titlebar-h) var(--toolbar-h) 1fr auto;
@@ -203,8 +189,6 @@ button svg,
 	background: var(--canvas);
 	border-left: var(--border-w) solid var(--border);
 }
-
-/* ================= 标题栏 ================= */
 
 .titlebar {
 	display: flex;
@@ -244,11 +228,6 @@ button svg,
 	color: #fff;
 }
 
-/* ---- 登录门在场时：标题栏透明浮在分栏之上 ----
-   .gate 是 z-index:100 的 fixed 层且从 inset:0 起算，标题栏不抬到它上面就会被
-   盖住、窗口按钮点不动。透明之后左半截落在浅色表单栏、右半截落在深色栏上。
-   窗口按钮和 ossutil 状态都在右边，所以按深色配色给；窄窗口下右栏隐藏，
-   这些颜色要跟着还原，见下面的断点。 */
 
 .titlebar.on-gate {
 	position: relative;
@@ -283,8 +262,7 @@ button svg,
 	color: #f0736a;
 }
 
-/* 窗口窄到装不下分栏：右栏整个收起，表单铺满，
-   标题栏这时压在浅色上，深色配色要还原回来 */
+
 @media (max-width: 58em) {
 	.gate {
 		grid-template-columns: 1fr;
@@ -376,8 +354,6 @@ button svg,
 		transform: rotate(360deg);
 	}
 }
-
-/* ---- 面包屑 ---- */
 
 .crumbs {
 	flex: 1;
@@ -853,6 +829,7 @@ button svg,
 }
 
 .th span {
+
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1306,9 +1283,6 @@ button svg,
 
 /* ================= 连接门 ================= */
 
-/* 左右分栏：左边表单（浅色），右边深色动态背景。
-   inset 从 0 起算、盖住标题栏，右栏才能一直顶到窗口右上角；
-   标题栏靠 .on-gate 抬到更高的 z-index 上浮着，见上面那段。 */
 .gate {
 	position: fixed;
 	inset: 0;
@@ -1322,13 +1296,12 @@ button svg,
 	display: grid;
 	align-content: center;
 	gap: var(--space-4);
-	/* 顶部让开标题栏，免得品牌区被窗口按钮压住 */
 	padding: calc(var(--titlebar-h) + 2rem) clamp(2rem, 5vw, 4rem) 2rem;
 	overflow-y: auto;
 	min-width: 0;
 }
 
-/* 品牌行现在坐在表单顶部、AccessKey ID 上方，居中 */
+
 .gate-brand {
 	display: flex;
 	align-items: center;
@@ -1336,7 +1309,7 @@ button svg,
 	gap: var(--space-2);
 	font-family: var(--font-display);
 	font-size: 1.125rem;
-	/* 不写 font-weight：Archivo Black 自带就是最重的一档 */
+
 	letter-spacing: 0.06em;
 	color: var(--text);
 }
@@ -1348,14 +1321,15 @@ button svg,
 
 .gate-visual {
 	position: relative;
-	overflow: hidden; /* 云靠这个裁切出画，删了就没有“半朵”效果 */
+	overflow: hidden;
 	isolation: isolate;
 	display: grid;
 	place-items: center;
 	background: #05070f;
-	container-type: inline-size; /* 字号跟着本栏宽度走，不跟窗口走 */
+	container-type: inline-size;
 	min-width: 0;
 }
+
 
 /* 左侧与表单拼接处羽化：从画布底色渐变到透明，柔化硬切边 */
 .gate-visual::before {
@@ -1370,7 +1344,6 @@ button svg,
 	pointer-events: none;
 }
 
-/* ---- 右栏视觉：静态分层渐变 + 大云轮廓 ---- */
 
 .vis-bg {
 	position: absolute;
@@ -1418,9 +1391,7 @@ button svg,
 	background: radial-gradient(120% 78% at 46% 46%, transparent 46%, rgba(2, 4, 10, 0.7) 100%);
 }
 
-/* 云：以本栏中心为锚点，再做一次微偏移把文字摆进云肚子偏上的位置。
-   width 取 165% 和 112vh 的较小值 —— 窗口最大化时本栏变得又宽又矮，
-   只按宽度算云会高得离谱，只剩一段弧看不出是云。 */
+
 .vis-cloud {
 	position: absolute;
 	top: 50%;
@@ -1445,8 +1416,7 @@ button svg,
 	opacity: 0.55;
 }
 
-/* 噪点消掉深色渐变的色带。data: URI 靠 CSP 里的 img-src 'self' data: 才不会被拦。
-   放在云后面，噪点要盖在云线上，不然云线看着会太“干净”，和背景不是一层。 */
+
 .vis-grain {
 	position: absolute;
 	inset: 0;
@@ -1468,7 +1438,7 @@ button svg,
 	line-height: 1;
 	color: #fff;
 	letter-spacing: 0.07em;
-	text-indent: 0.07em; /* 补掉最后一个字母右侧多出的字距，才是真居中 */
+	text-indent: 0.07em;
 }
 
 .vis-rule {
@@ -1498,7 +1468,6 @@ button svg,
 }
 
 
-/* 分栏之后卡片已经站在自己的浅色栏里，不需要边框和投影再框一层 */
 .gate-card {
 	width: 100%;
 	display: flex;
@@ -1561,7 +1530,6 @@ button svg,
 	padding-right: 2.5rem;
 }
 
-/* 眼睛图标按钮：不给底色，免得在输入框里像个第二个控件 */
 .affix-icon {
 	position: absolute;
 	right: var(--space-1);
@@ -1692,9 +1660,6 @@ button svg,
 }
 
 /* ================= 响应式（em 基准，不受用户缩放影响）================= */
-
-/* 列的显隐由 JS 重算 --cols（拖拽列宽走的也是同一条路），这里只管侧边栏。
-   48em 以下收成图标条，点击展开为浮层。 */
 
 @media (max-width: 75em) {
 	:root {
@@ -2076,9 +2041,6 @@ button svg,
 }
 /* ================= 底部状态栏 ================= */
 
-/* 进度不是"栏里放一根条"，而是整条栏从左往右被浸染。
-   @property 让 --fill 成为可动画的百分比 —— 不注册的话自定义属性是字符串，
-   transition 会直接跳变。 */
 @property --fill {
 	syntax: "<percentage>";
 	inherits: false;
