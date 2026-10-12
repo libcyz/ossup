@@ -2,6 +2,9 @@ name: Build & Release
 
 on:
   push:
+    # 推 main 只编译、出 artifact；推 v* tag 才额外发布 Release
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
