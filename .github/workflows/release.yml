@@ -1,0 +1,175 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Bump this to ship a newer ossutil with every platform.
+  OSSUTIL_VERSION: "2.4.0"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-rpm
+            os: ubuntu-24.04
+            bundles: rpm
+            target: ""
+            out: src-tauri/target/release/bundle/rpm/*.rpm
+          - name: windows-nsis
+            os: windows-latest
+            bundles: nsis
+            target: ""
+            out: src-tauri/target/release/bundle/nsis/*.exe
+          # 一个 universal dmg 同时支持 Apple 芯片和 Intel
+          - name: macos-universal
+            os: macos-latest
+            bundles: dmg
+            target: universal-apple-darwin
+            out: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            pkg-config \
+            patchelf \
+            build-essential \
+            curl wget file unzip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.name }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # binaries/ 不进仓库，按平台现取。Windows 会在编译期把 ossutil.exe
+      # include_bytes! 进 exe，所以这一步必须在构建之前。
+      - name: Fetch ossutil
+        run: |
+          tmp="$RUNNER_TEMP"
+          # Git Bash 下 RUNNER_TEMP 是 D:\a\_temp，换成 D:/a/_temp 让 curl 和 7z 都认
+          [ "$RUNNER_OS" = "Windows" ] && tmp="$(cygpath -m "$tmp")"
+          # $(…) 里 bash -e 不生效，每步显式 return，失败才能中止整步
+          fetch() {
+            local plat="$1" dir="$tmp/ossutil-$1"
+            curl -fsSL -o "$dir.zip" \
+              "https://gosspublic.alicdn.com/ossutil/v2/${OSSUTIL_VERSION}/ossutil-${OSSUTIL_VERSION}-${plat}.zip" || return 1
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              7z x -y -o"$dir" "$dir.zip" >/dev/null || return 1
+            else
+              unzip -oq "$dir.zip" -d "$dir" || return 1
+            fi
+            echo "$dir/ossutil-${OSSUTIL_VERSION}-${plat}"
+          }
+          mkdir -p "$tmp" src-tauri/binaries
+          case "$RUNNER_OS" in
+            Linux)
+              d="$(fetch linux-amd64)"
+              install -m 0755 "$d/ossutil" src-tauri/binaries/ossutil
+              src-tauri/binaries/ossutil version
+              ;;
+            Windows)
+              d="$(fetch windows-amd64)"
+              cp "$d/ossutil.exe" src-tauri/binaries/ossutil.exe
+              src-tauri/binaries/ossutil.exe version
+              ;;
+            macOS)
+              arm="$(fetch mac-arm64)"
+              x64="$(fetch mac-amd64)"
+              lipo -create "$arm/ossutil" "$x64/ossutil" -output src-tauri/binaries/ossutil
+              chmod 0755 src-tauri/binaries/ossutil
+              lipo -info src-tauri/binaries/ossutil
+              src-tauri/binaries/ossutil version
+              ;;
+          esac
+
+      - name: Build
+        run: |
+          args=(--bundles "${{ matrix.bundles }}")
+          if [ -n "${{ matrix.target }}" ]; then
+            args+=(--target "${{ matrix.target }}")
+          fi
+          npm run tauri build -- "${args[@]}"
+
+      # 产物名里的中文 productName 到了 GitHub Release 会被吞成 "OSS."，
+      # 统一换成 ossup-<版本...>
+      - name: Collect
+        run: |
+          mkdir -p dist-release
+          shopt -s nullglob
+          files=(${{ matrix.out }})
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no bundle produced" >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            base="$(basename "$f")"
+            cp "$f" "dist-release/ossup-$(printf '%s' "$base" | sed -E 's/^[^_-]*[_-]//')"
+          done
+          ls -lh dist-release/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ossup-${{ matrix.name }}
+          path: dist-release/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          pattern: ossup-*
+          merge-multiple: true
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+          fail_on_unmatched_files: true
