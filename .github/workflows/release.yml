@@ -2,7 +2,7 @@ name: Build & Release
 
 on:
   push:
-    # 推 main 只编译、出 artifact；推 v* tag 才额外发布 Release
+    # 推 main → 刷新 latest 预发布版；推 v* tag → 发正式 Release
     branches:
       - main
     tags:
@@ -161,10 +161,18 @@ jobs:
           path: dist-release/*
           if-no-files-found: error
 
+  # 每次构建都发：
+  # - v* 标签 → 对应版本的正式 Release
+  # - 推 main / 手动触发 → 刷新 "latest" 预发布版
   release:
     needs: build
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
+    # 连推两次时别让两个 job 同时删建 latest
+    concurrency:
+      group: release-${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
+      cancel-in-progress: false
+    env:
+      IS_TAG: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -173,8 +181,30 @@ jobs:
           pattern: ossup-*
           merge-multiple: true
 
+      # latest 每次整个重建：旧包（版本号变了文件名就变）不会残留，
+      # tag 也会指向这次的提交，而不是第一次创建时的那个
+      - name: Drop previous latest
+        if: env.IS_TAG != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete latest --cleanup-tag --yes -R "$GITHUB_REPOSITORY" || true
+
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist-release/*
           fail_on_unmatched_files: true
+          tag_name: ${{ env.IS_TAG == 'true' && github.ref_name || 'latest' }}
+          name: ${{ env.IS_TAG == 'true' && github.ref_name || '最新构建 (latest)' }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ env.IS_TAG != 'true' }}
+          body: |
+            OSS 上传助手
+
+            - Windows：下载 `ossup-*_x64-setup.exe` 安装。
+            - macOS：下载 `ossup-*_universal.dmg`，把应用拖进「应用程序」。首次打开提示
+              "无法验证开发者" 时，到「系统设置 → 隐私与安全性」点「仍要打开」
+              （或终端跑 `xattr -dr com.apple.quarantine "/Applications/OSS 上传助手.app"`）。
+            - Linux：
+              - 下载即用：`ossup-*_amd64.AppImage`，`chmod +x` 后双击或直接运行。
+              - Fedora / RHEL：`sudo dnf install ./ossup-*.rpm`
